@@ -48,10 +48,15 @@ public class Divider extends javax.swing.JFrame {
         jButton2.setBackground(new java.awt.Color(72, 179, 175));
         jButton2.setFont(new java.awt.Font("Lucida Sans", 1, 24)); // NOI18N
         jButton2.setText("Dining Management");
+        jButton2.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButton2ActionPerformed(evt);
+            }
+        });
 
         jButton3.setBackground(new java.awt.Color(72, 179, 175));
         jButton3.setFont(new java.awt.Font("Lato", 1, 18)); // NOI18N
-        jButton3.setText("Login As Admin");
+        jButton3.setText("Login");
         jButton3.setBorder(javax.swing.BorderFactory.createBevelBorder(javax.swing.border.BevelBorder.RAISED));
         jButton3.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
@@ -118,7 +123,7 @@ public class Divider extends javax.swing.JFrame {
 
     private void jButton3ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton3ActionPerformed
         // TODO add your handling code here:
-        Admin_Login page3 = new Admin_Login();
+        Login page3 = new Login();
                 page3.setVisible(true);
 
                 // Hide the current page
@@ -132,6 +137,12 @@ public class Divider extends javax.swing.JFrame {
     this.dispose(); // close current JFrame
 
     }//GEN-LAST:event_jButton1ActionPerformed
+
+    private void jButton2ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton2ActionPerformed
+        // TODO add your handling code here:
+        DiningPage dn = new DiningPage();
+        dn.setVisible(true);
+    }//GEN-LAST:event_jButton2ActionPerformed
 
     /**
      * @param args the command line arguments

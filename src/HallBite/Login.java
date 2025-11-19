@@ -184,11 +184,12 @@ public class Login extends javax.swing.JFrame {
     }//GEN-LAST:event_jButton2ActionPerformed
 
     // LOGIN BUTTON
+// LOGIN BUTTON
     private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton1ActionPerformed
         String username = jTextField2.getText().trim();
         char[] passChars = jPasswordField1.getPassword();
         String password = new String(passChars);
-        String userType = (String) jComboBox1.getSelectedItem();
+        String userType = (String) jComboBox1.getSelectedItem();  // "Student" or "Admin"
 
         if (username.isEmpty() || password.isEmpty()) {
             JOptionPane.showMessageDialog(this,
@@ -198,17 +199,24 @@ public class Login extends javax.swing.JFrame {
             return;
         }
 
-        // Adjust table/column names to match your actual DB
-        // Here: Students(username, password, user_type)
-        String sql = "SELECT * FROM Students WHERE username = ? AND password = ? AND user_type = ?";
+        // Decide which table to check
+        String sql;
+        if ("Admin".equalsIgnoreCase(userType)) {
+            // Table for admins
+            // Example structure: log_admin(username, password, user_type)
+            sql = "SELECT * FROM log_admin WHERE username = ? AND password = ? AND user_type = 'Admin'";
+        } else {
+            // Table for students
+            // Your students table: students(username, password, user_type)
+            sql = "SELECT * FROM students WHERE username = ? AND password = ? AND user_type = 'Student'";
+        }
 
         try (Connection conn = DriverManager.getConnection(
                 "jdbc:mysql://localhost:3306/hallbite", "root", "0000");
              PreparedStatement ps = conn.prepareStatement(sql)) {
 
             ps.setString(1, username);
-            ps.setString(2, password); // in real apps use hashed passwords
-            ps.setString(3, userType);
+            ps.setString(2, password);   // in real apps use hashed passwords
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -217,9 +225,16 @@ public class Login extends javax.swing.JFrame {
                             "Success",
                             JOptionPane.INFORMATION_MESSAGE);
 
-                    // Open dashboard with this username
-                    DashboardDesign dash = new DashboardDesign(username);
-                    dash.setVisible(true);
+                    if ("Admin".equalsIgnoreCase(userType)) {
+                        // open admin dashboard
+                        AdminShow adminDash = new AdminShow(username);
+                        adminDash.setVisible(true);
+                    } else {
+                        // open student dashboard
+                        DashboardDesign dash = new DashboardDesign(username);
+                        dash.setVisible(true);
+                    }
+
                     this.dispose();
                 } else {
                     JOptionPane.showMessageDialog(this,

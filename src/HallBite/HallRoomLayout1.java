@@ -14,28 +14,31 @@ import java.util.concurrent.ExecutionException;
 
 public class HallRoomLayout1 extends JFrame {
     private final String username;
+    private final int floor;          // numeric (1,2,3...)
+    private final String floorLabel;  // "1st", "2nd", etc.
 
-    // Map to store whether a room is full
-    private final Map<Integer, Boolean> roomFullMap = new HashMap<>();
+    // room_number (String) -> isFull
+    private final Map<String, Boolean> roomFullMap = new HashMap<>();
+    // room_number (String) -> JButton
+    private final Map<String, JButton> roomButtons = new HashMap<>();
 
-    // Map to keep a reference to each button by room number
-    private final Map<Integer, JButton> roomButtons = new HashMap<>();
-
-    public HallRoomLayout1(String username, String floor) {
+    public HallRoomLayout1(String username, String floorLabel) {
         this.username = username;
+        this.floorLabel = floorLabel;
+        this.floor = parseFloorFromLabel(floorLabel);
 
-        // Load room status (occupancy vs capacity) from DB
+        // load room status BEFORE buttons (for red on load)
         loadRoomStatus();
 
-        setTitle("HallBite - " + floor + " Floor Room Layout");
+        setTitle("HallBite - " + floorLabel + " Floor Room Layout");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setSize(1200, 800);
         setLocationRelativeTo(null);
 
-        // --- UI Code (largely unchanged) ---
         JPanel mainContainer = new JPanel(new BorderLayout());
         mainContainer.setBackground(new Color(180, 200, 180));
 
+        // ---------------- Title ----------------
         JPanel titlePanel = new JPanel();
         titlePanel.setBackground(new Color(90, 70, 60));
         titlePanel.setLayout(new BoxLayout(titlePanel, BoxLayout.Y_AXIS));
@@ -55,6 +58,7 @@ public class HallRoomLayout1 extends JFrame {
         titlePanel.add(Box.createVerticalStrut(5));
         titlePanel.add(subTitleLabel);
 
+        // ---------------- Top bar ----------------
         JPanel topPanel = new JPanel(new BorderLayout());
         topPanel.setOpaque(false);
         topPanel.setBorder(BorderFactory.createEmptyBorder(10, 10, 0, 10));
@@ -66,14 +70,25 @@ public class HallRoomLayout1 extends JFrame {
         });
         topPanel.add(backButton, BorderLayout.WEST);
 
+        JButton refreshButton = new JButton("Refresh rooms");
+        refreshButton.addActionListener(e -> reloadAllRooms());
+        topPanel.add(refreshButton, BorderLayout.EAST);
+
+        // ---------------- Room grid ----------------
         JPanel roomPanel = new JPanel(new GridBagLayout());
         roomPanel.setOpaque(false);
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(20, 20, 20, 20);
 
-        int[] roomNumbers = {101, 102, 103, 104, 105, 106, 107, 108, 109};
+        // For this floor, show e.g. 101–109, 201–209, etc.
+        String prefix = String.valueOf(floor); // "1","2","3"...
+        String[] roomNumbers = {
+                prefix + "01", prefix + "02", prefix + "03",
+                prefix + "04", prefix + "05", prefix + "06",
+                prefix + "07", prefix + "08", prefix + "09"
+        };
 
-        // Top row (middle 5 rooms)
+        // Top row (middle 5 rooms: x03-x07)
         gbc.gridy = 0;
         for (int i = 2; i < 7; i++) {
             gbc.gridx = i - 2;
@@ -89,17 +104,17 @@ public class HallRoomLayout1 extends JFrame {
         centerTextPanel.setOpaque(false);
         centerTextPanel.setLayout(new BoxLayout(centerTextPanel, BoxLayout.Y_AXIS));
 
-        JLabel floorLabel = new JLabel(floor + " Floor");
-        floorLabel.setFont(new Font("Stencil", Font.BOLD, 38));
-        floorLabel.setForeground(new Color(60, 60, 60));
-        floorLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        JLabel floorTextLabel = new JLabel(this.floorLabel + " Floor");
+        floorTextLabel.setFont(new Font("Stencil", Font.BOLD, 38));
+        floorTextLabel.setForeground(new Color(60, 60, 60));
+        floorTextLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
         JLabel selectLabel = new JLabel("Select a room");
         selectLabel.setFont(new Font("Lato", Font.BOLD, 24));
         selectLabel.setForeground(new Color(80, 80, 80));
         selectLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
-        centerTextPanel.add(floorLabel);
+        centerTextPanel.add(floorTextLabel);
         centerTextPanel.add(Box.createVerticalStrut(5));
         centerTextPanel.add(selectLabel);
 
@@ -107,13 +122,14 @@ public class HallRoomLayout1 extends JFrame {
 
         gbc.gridwidth = 1;
 
-        // Middle row side rooms
+        // Middle row side rooms: x02 and x08
+        gbc.gridy = 1;
         gbc.gridx = 0;
         roomPanel.add(createFlatRoomButton(roomNumbers[1]), gbc);
         gbc.gridx = 4;
         roomPanel.add(createFlatRoomButton(roomNumbers[7]), gbc);
 
-        // Bottom row corner rooms
+        // Bottom row corner rooms: x01 and x09
         gbc.gridy = 2;
         gbc.gridx = 0;
         roomPanel.add(createFlatRoomButton(roomNumbers[0]), gbc);
@@ -130,32 +146,79 @@ public class HallRoomLayout1 extends JFrame {
         mainContainer.add(centerWrapper, BorderLayout.CENTER);
 
         add(mainContainer);
+
+        // Optional: resync when window opens
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowOpened(java.awt.event.WindowEvent e) {
+                reloadAllRooms();
+            }
+        });
     }
 
-    // Load room occupancy info and mark which rooms are full
+    // "1st" -> 1, "2nd" -> 2, etc.
+    private int parseFloorFromLabel(String floorLabel) {
+        if (floorLabel == null) return 1;
+        String digits = floorLabel.replaceAll("\\D+", "");
+        if (digits.isEmpty()) return 1;
+        return Integer.parseInt(digits);
+    }
+
+    // --------- Load room occupancy for this floor ---------
     private void loadRoomStatus() {
-        String sql = "SELECT room_number, current_occupancy, capacity FROM rooms";
+        String sql =
+                "SELECT room_number, current_occupancy, capacity " +
+                        "FROM rooms WHERE floor = ?";
 
         try (Connection conn = DriverManager.getConnection(
                 "jdbc:mysql://localhost:3306/hallbite", "root", "0000");
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
 
-            while (rs.next()) {
-                int roomNo = rs.getInt("room_number");
-                int occ = rs.getInt("current_occupancy");
-                int cap = rs.getInt("capacity");
-                boolean isFull = occ >= cap;
-                roomFullMap.put(roomNo, isFull);
+            ps.setInt(1, floor);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                roomFullMap.clear();
+                while (rs.next()) {
+                    String roomNo = rs.getString("room_number");
+                    int occ = rs.getInt("current_occupancy");
+                    int cap = rs.getInt("capacity");
+                    roomFullMap.put(roomNo, occ >= cap);
+                }
             }
         } catch (Exception ex) {
             ex.printStackTrace();
-            // Optionally: show an error dialog
+            JOptionPane.showMessageDialog(this,
+                    "Error loading room status: " + ex.getMessage(),
+                    "Database Error",
+                    JOptionPane.ERROR_MESSAGE);
         }
     }
 
-    private JButton createFlatRoomButton(int roomNumber) {
-        JButton button = new JButton(String.valueOf(roomNumber));
+    // --------- Reload all buttons from DB status ---------
+    private void reloadAllRooms() {
+        loadRoomStatus();
+
+        for (Map.Entry<String, JButton> entry : roomButtons.entrySet()) {
+            String roomNo = entry.getKey();
+            JButton btn = entry.getValue();
+            boolean full = roomFullMap.getOrDefault(roomNo, false);
+
+            if (full) {
+                btn.setBackground(new Color(220, 60, 60));   // red
+                btn.setEnabled(false);
+                btn.setToolTipText("Room " + roomNo + " is full");
+            } else {
+                btn.setBackground(new Color(230, 180, 140)); // normal
+                btn.setEnabled(true);
+                btn.setToolTipText(null);
+            }
+            btn.repaint();
+        }
+    }
+
+    // --------- Create button: decide color BEFORE click ---------
+    private JButton createFlatRoomButton(String roomNumber) {
+        JButton button = new JButton(roomNumber);
         roomButtons.put(roomNumber, button);
 
         button.setPreferredSize(new Dimension(120, 120));
@@ -170,12 +233,12 @@ public class HallRoomLayout1 extends JFrame {
         boolean isFull = roomFullMap.getOrDefault(roomNumber, false);
 
         if (isFull) {
-            // Full room: red and disabled
+            // Full from the start: red and disabled
             button.setBackground(new Color(220, 60, 60));
             button.setEnabled(false);
             button.setToolTipText("Room " + roomNumber + " is full");
         } else {
-            // Available room: normal color
+            // Available
             button.setBackground(new Color(230, 180, 140));
 
             button.addMouseListener(new MouseAdapter() {
@@ -191,12 +254,13 @@ public class HallRoomLayout1 extends JFrame {
             button.addActionListener(e -> {
                 int choice = JOptionPane.showConfirmDialog(
                         HallRoomLayout1.this,
-                        "Are you sure you want to select room " + roomNumber + "?",
-                        "Confirm Selection",
+                        "Are you sure you want to request room " + roomNumber + "?",
+                        "Confirm Room Request",
                         JOptionPane.YES_NO_OPTION);
 
                 if (choice == JOptionPane.YES_OPTION) {
-                    assignRoomToStudent(roomNumber);
+                    // only store request, no occupancy increment
+                    createRoomRequest(roomNumber);
                 }
             });
         }
@@ -204,72 +268,53 @@ public class HallRoomLayout1 extends JFrame {
         return button;
     }
 
-    // =================================================================
-    // Transactional room assignment
-    // =================================================================
-    private void assignRoomToStudent(int roomNumber) {
+    // --------- Insert into roomRequest: username, reg_no, dept, room ---------
+    private void createRoomRequest(String roomNumber) {
         SwingWorker<String, Void> worker = new SwingWorker<String, Void>() {
             @Override
             protected String doInBackground() throws Exception {
-                String roomAsString = String.valueOf(roomNumber);
-                String checkRoomSql =
-                        "SELECT current_occupancy, capacity FROM rooms WHERE room_number = ? FOR UPDATE";
-                String updateStudentSql =
-                        "UPDATE students SET room_no = ? WHERE username = ?";
-                String updateRoomSql =
-                        "UPDATE rooms SET current_occupancy = current_occupancy + 1 WHERE room_number = ?";
 
-                Connection conn = null;
-                try {
-                    conn = DriverManager.getConnection(
-                            "jdbc:mysql://localhost:3306/hallbite", "root", "0000");
-                    conn.setAutoCommit(false);
+                // 1) get reg_no and department of this user
+                String selectStudentSql =
+                        "SELECT reg_no, department FROM students WHERE username = ?";
 
-                    // 1. Check room capacity and lock row
-                    try (PreparedStatement checkStmt = conn.prepareStatement(checkRoomSql)) {
-                        checkStmt.setString(1, roomAsString);
-                        ResultSet rs = checkStmt.executeQuery();
+                String insertRequestSql =
+                        "INSERT INTO roomRequest (username, reg_no, department, room_number, floor) " +
+                                "VALUES (?, ?, ?, ?, ?)";
 
-                        if (rs.next()) {
-                            int occupancy = rs.getInt("current_occupancy");
-                            int capacity = rs.getInt("capacity");
+                try (Connection conn = DriverManager.getConnection(
+                        "jdbc:mysql://localhost:3306/hallbite", "root", "0000")) {
 
-                            if (occupancy >= capacity) {
-                                conn.rollback();
-                                return "ROOM_FULL";
+                    String regNo;
+                    String dept;
+
+                    // get student data
+                    try (PreparedStatement ps = conn.prepareStatement(selectStudentSql)) {
+                        ps.setString(1, username);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                regNo = rs.getString("reg_no");
+                                dept = rs.getString("department");
+                            } else {
+                                return "NO_STUDENT";
                             }
-                        } else {
-                            conn.rollback();
-                            return "ROOM_NOT_FOUND";
                         }
                     }
 
-                    // 2. Update student's room
-                    try (PreparedStatement updateStudentStmt = conn.prepareStatement(updateStudentSql)) {
-                        updateStudentStmt.setString(1, roomAsString);
-                        updateStudentStmt.setString(2, username);
-                        updateStudentStmt.executeUpdate();
+                    // insert request
+                    try (PreparedStatement ps = conn.prepareStatement(insertRequestSql)) {
+                        ps.setString(1, username);
+                        ps.setString(2, regNo);
+                        ps.setString(3, dept);
+                        ps.setString(4, roomNumber);
+                        ps.setInt(5, floor);
+                        ps.executeUpdate();
                     }
 
-                    // 3. Increment room occupancy
-                    try (PreparedStatement updateRoomStmt = conn.prepareStatement(updateRoomSql)) {
-                        updateRoomStmt.setString(1, roomAsString);
-                        updateRoomStmt.executeUpdate();
-                    }
-
-                    conn.commit();
                     return "SUCCESS";
 
                 } catch (Exception e) {
-                    if (conn != null) {
-                        conn.rollback();
-                    }
                     throw e;
-                } finally {
-                    if (conn != null) {
-                        conn.setAutoCommit(true);
-                        conn.close();
-                    }
                 }
             }
 
@@ -280,27 +325,14 @@ public class HallRoomLayout1 extends JFrame {
                     switch (status) {
                         case "SUCCESS":
                             JOptionPane.showMessageDialog(HallRoomLayout1.this,
-                                    "Successfully assigned to room " + roomNumber + "!",
-                                    "Success",
+                                    "Room request submitted for room " + roomNumber + ".",
+                                    "Request Submitted",
                                     JOptionPane.INFORMATION_MESSAGE);
-
-                            // Refresh this room’s status and button color
-                            updateSingleRoomStatus(roomNumber);
                             break;
 
-                        case "ROOM_FULL":
+                        case "NO_STUDENT":
                             JOptionPane.showMessageDialog(HallRoomLayout1.this,
-                                    "Could not assign room. Room " + roomNumber + " is full.",
-                                    "Assignment Failed",
-                                    JOptionPane.WARNING_MESSAGE);
-
-                            // Room might have become full meanwhile; refresh UI
-                            updateSingleRoomStatus(roomNumber);
-                            break;
-
-                        case "ROOM_NOT_FOUND":
-                            JOptionPane.showMessageDialog(HallRoomLayout1.this,
-                                    "Could not assign room. Room " + roomNumber + " does not exist in the system.",
+                                    "Student data not found for username: " + username,
                                     "Error",
                                     JOptionPane.ERROR_MESSAGE);
                             break;
@@ -314,42 +346,6 @@ public class HallRoomLayout1 extends JFrame {
             }
         };
         worker.execute();
-    }
-
-    // Re-check a single room after assignment and update its button
-    private void updateSingleRoomStatus(int roomNumber) {
-        String sql = "SELECT current_occupancy, capacity FROM rooms WHERE room_number = ?";
-
-        try (Connection conn = DriverManager.getConnection(
-                "jdbc:mysql://localhost:3306/hallbite", "root", "0000");
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-
-            ps.setInt(1, roomNumber);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    int occ = rs.getInt("current_occupancy");
-                    int cap = rs.getInt("capacity");
-                    boolean full = occ >= cap;
-                    roomFullMap.put(roomNumber, full);
-
-                    JButton btn = roomButtons.get(roomNumber);
-                    if (btn != null) {
-                        if (full) {
-                            btn.setBackground(new Color(220, 60, 60));
-                            btn.setEnabled(false);
-                            btn.setToolTipText("Room " + roomNumber + " is full");
-                        } else {
-                            btn.setBackground(new Color(230, 180, 140));
-                            btn.setEnabled(true);
-                            btn.setToolTipText(null);
-                        }
-                        btn.repaint();
-                    }
-                }
-            }
-        } catch (Exception ex) {
-            ex.printStackTrace();
-        }
     }
 
     private JButton createBackButton(String text) {

@@ -48,7 +48,7 @@ public class Login extends javax.swing.JFrame {
                 new java.awt.Color(255, 255, 255)
         ));
 
-        jButton1.setBackground(new java.awt.Color(63, 114, 175));
+        jButton1.setBackground(new java.awt.Color(63, 114, 175));//
         jButton1.setFont(new java.awt.Font("Futura", 1, 24));
         jButton1.setForeground(new java.awt.Color(219, 226, 239));
         jButton1.setText("Login");
@@ -234,7 +234,6 @@ public class Login extends javax.swing.JFrame {
                         DashboardDesign dash = new DashboardDesign(username);
                         dash.setVisible(true);
                     }
-
                     this.dispose();
                 } else {
                     JOptionPane.showMessageDialog(this,

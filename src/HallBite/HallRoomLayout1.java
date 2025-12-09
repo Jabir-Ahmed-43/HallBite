@@ -17,7 +17,7 @@ public class HallRoomLayout1 extends JFrame {
     private final int floor;          // numeric (1,2,3...)
     private final String floorLabel;  // "1st", "2nd", etc.
 
-    // room_number (String) -> isFull
+    // room_number (String) -> isFull (true if current_occupancy >= 4)
     private final Map<String, Boolean> roomFullMap = new HashMap<>();
     // room_number (String) -> JButton
     private final Map<String, JButton> roomButtons = new HashMap<>();
@@ -166,9 +166,7 @@ public class HallRoomLayout1 extends JFrame {
 
     // --------- Load room occupancy for this floor ---------
     private void loadRoomStatus() {
-        String sql =
-                "SELECT room_number, current_occupancy, capacity " +
-                        "FROM rooms WHERE floor = ?";
+        String sql = "SELECT room_number, current_occupancy FROM rooms WHERE floor = ?";
 
         try (Connection conn = DriverManager.getConnection(
                 "jdbc:mysql://localhost:3306/hallbite", "root", "0000");
@@ -181,9 +179,16 @@ public class HallRoomLayout1 extends JFrame {
                 while (rs.next()) {
                     String roomNo = rs.getString("room_number");
                     int occ = rs.getInt("current_occupancy");
-                    int cap = rs.getInt("capacity");
-                    roomFullMap.put(roomNo, occ >= cap);
+
+                    // Room is FULL when current_occupancy >= 4
+                    boolean isFull = occ >= 4;
+
+                    roomFullMap.put(roomNo, isFull);
+
+                    // Debug output (optional, remove in production)
+                    System.out.println("Room: " + roomNo + ", Occupancy: " + occ + ", Is Full: " + isFull);
                 }
+                System.out.println("Total rooms loaded for floor " + floor + ": " + roomFullMap.size());
             }
         } catch (Exception ex) {
             ex.printStackTrace();
@@ -206,7 +211,7 @@ public class HallRoomLayout1 extends JFrame {
             if (full) {
                 btn.setBackground(new Color(220, 60, 60));   // red
                 btn.setEnabled(false);
-                btn.setToolTipText("Room " + roomNo + " is full");
+                btn.setToolTipText("Room " + roomNo + " is full (4/4 occupied)");
             } else {
                 btn.setBackground(new Color(230, 180, 140)); // normal
                 btn.setEnabled(true);
@@ -230,13 +235,14 @@ public class HallRoomLayout1 extends JFrame {
         button.setOpaque(true);
         button.setContentAreaFilled(true);
 
+        // Check if room is full (occupancy >= 4)
         boolean isFull = roomFullMap.getOrDefault(roomNumber, false);
 
         if (isFull) {
             // Full from the start: red and disabled
             button.setBackground(new Color(220, 60, 60));
             button.setEnabled(false);
-            button.setToolTipText("Room " + roomNumber + " is full");
+            button.setToolTipText("Room " + roomNumber + " is full (4/4 occupied)");
         } else {
             // Available
             button.setBackground(new Color(230, 180, 140));
@@ -269,51 +275,92 @@ public class HallRoomLayout1 extends JFrame {
     }
 
     // --------- Insert into roomRequest: username, reg_no, dept, room ---------
+    // --------- Insert into roomRequest: username, reg_no, dept, room ---------
     private void createRoomRequest(String roomNumber) {
         SwingWorker<String, Void> worker = new SwingWorker<String, Void>() {
             @Override
             protected String doInBackground() throws Exception {
+                // Get student data including name
+                String selectStudentSql = "SELECT name, reg_no, department FROM students WHERE username = ?";
 
-                // 1) get reg_no and department of this user
-                String selectStudentSql =
-                        "SELECT reg_no, department FROM students WHERE username = ?";
+                String checkRoomSql = "SELECT current_occupancy FROM rooms WHERE room_number = ?";
 
-                String insertRequestSql =
-                        "INSERT INTO roomRequest (username, reg_no, department, room_number, floor) " +
-                                "VALUES (?, ?, ?, ?, ?)";
+                String insertRequestSql = "INSERT INTO roomRequest (name, username, reg_no, department, hall_name, room_number, floor) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)";
 
                 try (Connection conn = DriverManager.getConnection(
                         "jdbc:mysql://localhost:3306/hallbite", "root", "0000")) {
 
-                    String regNo;
-                    String dept;
+                    String name = "";
+                    String regNo = "";
+                    String dept = "";
+                    String hallName = "Bijoy-24 Hall";
 
-                    // get student data
+                    // First, check if room is still available
+                    int currentOccupancy = 0;
+                    try (PreparedStatement ps = conn.prepareStatement(checkRoomSql)) {
+                        ps.setString(1, roomNumber);
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next()) {
+                                currentOccupancy = rs.getInt("current_occupancy");
+                                if (currentOccupancy >= 4) {
+                                    return "ROOM_FULL";
+                                }
+                            } else {
+                                return "ROOM_NOT_FOUND";
+                            }
+                        }
+                    }
+
+                    // Get student data - INCLUDING NAME
                     try (PreparedStatement ps = conn.prepareStatement(selectStudentSql)) {
                         ps.setString(1, username);
                         try (ResultSet rs = ps.executeQuery()) {
                             if (rs.next()) {
+                                name = rs.getString("name");        // Get the student's actual name
                                 regNo = rs.getString("reg_no");
                                 dept = rs.getString("department");
+
+                                // Debug: check if data is retrieved
+                                System.out.println("Retrieved student data for " + username +
+                                        ": Name=" + name +
+                                        ", RegNo=" + regNo +
+                                        ", Dept=" + dept);
                             } else {
                                 return "NO_STUDENT";
                             }
                         }
                     }
 
-                    // insert request
-                    try (PreparedStatement ps = conn.prepareStatement(insertRequestSql)) {
+                    // Check if student already has a request (without status check since table doesn't have status column)
+                    String checkExistingRequestSql = "SELECT COUNT(*) FROM roomRequest WHERE username = ?";
+                    try (PreparedStatement ps = conn.prepareStatement(checkExistingRequestSql)) {
                         ps.setString(1, username);
-                        ps.setString(2, regNo);
-                        ps.setString(3, dept);
-                        ps.setString(4, roomNumber);
-                        ps.setInt(5, floor);
-                        ps.executeUpdate();
+                        try (ResultSet rs = ps.executeQuery()) {
+                            if (rs.next() && rs.getInt(1) > 0) {
+                                return "EXISTING_REQUEST";
+                            }
+                        }
+                    }
+
+                    // Insert request with all required fields
+                    try (PreparedStatement ps = conn.prepareStatement(insertRequestSql)) {
+                        ps.setString(1, name);           // Student's name
+                        ps.setString(2, username);       // Username
+                        ps.setString(3, regNo);          // Registration number
+                        ps.setString(4, dept);           // Department
+                        ps.setString(5, hallName);       // Hall name
+                        ps.setString(6, roomNumber);     // Room number
+                        ps.setInt(7, floor);             // Floor
+
+                        int rowsAffected = ps.executeUpdate();
+                        System.out.println("Inserted request for " + name + " in room " + roomNumber);
                     }
 
                     return "SUCCESS";
 
                 } catch (Exception e) {
+                    e.printStackTrace();
                     throw e;
                 }
             }
@@ -325,23 +372,54 @@ public class HallRoomLayout1 extends JFrame {
                     switch (status) {
                         case "SUCCESS":
                             JOptionPane.showMessageDialog(HallRoomLayout1.this,
-                                    "Room request submitted for room " + roomNumber + ".",
+                                    "Room request submitted for room " + roomNumber + ".\n" +
+                                            "Your request will be reviewed by the hall administration.",
                                     "Request Submitted",
                                     JOptionPane.INFORMATION_MESSAGE);
+                            reloadAllRooms();
+                            break;
+
+                        case "ROOM_FULL":
+                            JOptionPane.showMessageDialog(HallRoomLayout1.this,
+                                    "Room " + roomNumber + " is now full. Please select another room.",
+                                    "Room Unavailable",
+                                    JOptionPane.WARNING_MESSAGE);
+                            reloadAllRooms();
+                            break;
+
+                        case "ROOM_NOT_FOUND":
+                            JOptionPane.showMessageDialog(HallRoomLayout1.this,
+                                    "Room " + roomNumber + " not found in the database.",
+                                    "Error",
+                                    JOptionPane.ERROR_MESSAGE);
                             break;
 
                         case "NO_STUDENT":
                             JOptionPane.showMessageDialog(HallRoomLayout1.this,
-                                    "Student data not found for username: " + username,
-                                    "Error",
+                                    "Student data not found for username: " + username +
+                                            "\nPlease complete your profile in the dashboard first.",
+                                    "Profile Incomplete",
                                     JOptionPane.ERROR_MESSAGE);
+                            break;
+
+                        case "EXISTING_REQUEST":
+                            JOptionPane.showMessageDialog(HallRoomLayout1.this,
+                                    "You already have a pending room request.\n" +
+                                            "Please wait for your current request to be processed.",
+                                    "Existing Request Found",
+                                    JOptionPane.WARNING_MESSAGE);
                             break;
                     }
                 } catch (InterruptedException | ExecutionException e) {
+                    String errorMessage = "A database error occurred.";
+                    if (e.getCause() != null) {
+                        errorMessage = e.getCause().getMessage();
+                    }
                     JOptionPane.showMessageDialog(HallRoomLayout1.this,
-                            "A database error occurred: " + e.getCause().getMessage(),
+                            errorMessage,
                             "Database Error",
                             JOptionPane.ERROR_MESSAGE);
+                    e.printStackTrace();
                 }
             }
         };
